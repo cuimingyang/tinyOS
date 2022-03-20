@@ -59,6 +59,10 @@ typedef double DOUBLE_T;
 
 typedef size_t SIZE_T;
 
+#ifndef WEAK
+#define WEAK _wake_
+#endif
+
 #ifndef IN
 #define IN 
 #endif
