@@ -161,9 +161,9 @@ NODE_S *double_list_remove_head_node(DOUBLE_LIST_S *ptList)
     NODE_S *ptNode = NULL;
 
     if (ptList->uiNodeCount != 0) {
-        ptNode = list->tHeadNode.ptNextNode;
+        ptNode = ptList->tHeadNode.ptNextNode;
 
-        ptNode->ptNextNode->ptPrevNode = &(list->tHeadNode);
+        ptNode->ptNextNode->ptPrevNode = &(ptList->tHeadNode);
         ptList->tHeadNode.ptNextNode = ptNode->ptNextNode;
         ptList->uiNodeCount--;
 
