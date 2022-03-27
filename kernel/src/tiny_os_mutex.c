@@ -1,6 +1,8 @@
 #ifndef __TINY_OS_MUTEX_H__
 #define __TINY_OS_MUTEX_H__
 
+#include "tiny_os.h"
+#include "tiny_os_mutex.h"
 
 #ifdef __cplusplus
 extern "C" {

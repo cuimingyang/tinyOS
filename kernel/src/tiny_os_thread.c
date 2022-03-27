@@ -75,7 +75,7 @@ typedef struct{
     BIT_MAP_S tPrioBitmap;                 ///< 任务优先级的标记位置结构
     UCHAR_T ucSchedLockCnt;                ///< 调度锁计数器
     UINT_T uiTickCnt;                      ///< 时钟节拍计数
-    LINK_LIST_S tThreadDelayList;          ///< 延时队列
+    LINK_LIST_S tDelayList;                ///< 延时队列
     UINT_T uiIdleCnt;                      ///< 空闲任务计数
     UINT_T uiIdleMaxCnt;                   ///< 空闲任务最大计数
     LINK_LIST_S tThreadTable[TINYOS_PRO_COUNT];   ///< 所有任务的指针数组
@@ -181,11 +181,14 @@ VOID __thread_sched_unready(THREAD_HANDLE_S *ptThread)
     }
 }
 
-/**
- * @brief 将任务从就绪列表中移除
- * @param task    等待移除的任务
- */
-STATIC VOID __thread_sched_remove(THREAD_HANDLE_S *ptThread) 
+///> 将延时的任务从延时队列中移除
+VOID __thread_delay_list_remove(THREAD_HANDLE_S *ptThread)
+{    
+    double_list_remove_node(tThreadSched.tDelayList, ptThread->tDelayNode);
+}
+
+///> 将任务从就绪列表中移除
+STATIC VOID __thread_sched_list_remove(THREAD_HANDLE_S *ptThread) 
 {
     double_list_remove_node(&tThreadSched.tThreadTable[ptThread->uiPrio], &(ptThread->tLinkNode));
     
@@ -223,7 +226,7 @@ STATIC VOID __thread_delayed_wake_up(THREAD_HANDLE_S *ptThread)
 {
     ptThread->uiDelayTicks = 0;
     
-    double_list_remove_node(&tThreadSched.tThreadDelayList, &(ptThread->tDelayNode));
+    double_list_remove_node(&tThreadSched.tDelayList, &(ptThread->tDelayNode));
     ptThread->uiCurState &= ~TINYOS_TASK_STATE_DELAYED;
 }
 
@@ -262,12 +265,12 @@ VOID tiny_os_system_tick_handle(VOID)
     UINT_T uiStatus = __thread_enter_critical();
 
     ///> 遍历延时队列中的任务节点
-    ptNode = double_list_get_head_node(&tThreadSched.tThreadDelayList);
-    for(uiCnt = double_list_get_node_num(&tThreadSched.tThreadDelayList); uiCnt > 0; uiCnt--) {
+    ptNode = double_list_get_head_node(&tThreadSched.tDelayList);
+    for(uiCnt = double_list_get_node_num(&tThreadSched.tDelayList); uiCnt > 0; uiCnt--) {
         THREAD_HANDLE_S *ptThread = GET_PARENT_BY_NODE(ptNode, THREAD_HANDLE_S, tDelayNode);
         if(0 == --ptThread->uiDelayTicks){
             ///> 预先获取下一结点，否则下面的移除会造成问题
-            ptNode = double_list_get_next_node(&tThreadSched.tThreadDelayList, ptNode);
+            ptNode = double_list_get_next_node(&tThreadSched.tDelayList, ptNode);
 
             ///> 将任务从延时队列中移除
             __thread_delayed_wake_up(ptThread);
@@ -317,10 +320,27 @@ VOID tiny_os_system_tick_handle(VOID)
  * @param：pvArg，线程入口参数
  * @return: 0=success， other=fail
  */
-OPERATE_RET tiny_os_thread_create(OUT THREAD_HANDLE* pThreadHandle, IN CONST CHAR_T* pcName, IN UINT_T uiStackSize, IN UINT_T uiPrio, IN THREAD_pFunc_T pFunc, IN VOID* CONST pvArg)
+OPERATE_RET tiny_os_thread_create(OUT THREAD_HANDLE* ptThreadHandle, IN CONST CHAR_T* pcName, IN UINT_T uiStackSize, IN UINT_T uiPrio, IN THREAD_pFunc_T pFunc, IN VOID* CONST pvArg)
 {
+    UINT_T uiStackTop;
+    THREAD_HANDLE_S *ptThread = (THREAD_HANDLE_S*)&ptThreadHandle;
+    ptThread->puiStackBase = tiny_os_malloc(uiStackSize);
+    if(NULL == ptThread->puiStackBase){
+        return OPRT_MALLOC_FAILED;
+    }
 
+    ptThread->uiStackSize = uiStackSize;
+    memset(ptThread->puiStackBase, 0, uiStackSize);
+
+    //to do 寄存器初始化
+
+    ptThread->uiRemainSlice = TINYOS_SLICE_MAX;
+    ptThread->puiStackResume = uiStackTop;
+    ptThread->uiPrio = uiPrio;
+    
+    __thread_sched_ready(ptThreadHandle);
 }
+
 
 /**
  * @brief：删除线程
@@ -330,7 +350,21 @@ OPERATE_RET tiny_os_thread_create(OUT THREAD_HANDLE* pThreadHandle, IN CONST CHA
  */
 OPERATE_RET tiny_os_thread_delete(IN THREAD_HANDLE threadHandle)
 {
+    UINT_T uiStatus = __thread_enter_critical();
 
+    THREAD_HANDLE_S *ptThread = (THREAD_HANDLE_S*)&threadHandle;
+    if(ptThread->uiCurState & TINYOS_TASK_STATE_DELAYED){
+        __thread_delay_list_remove(ptThread);
+    }else if(!(ptThread->uiCurState & TINYOS_TASK_STATE_SUSPEND)){
+        __thread_sched_list_remove(ptThread);
+    }
+
+    if(tThreadSched.ptCurThread == ptThread){
+        __thread_sched();
+    }
+    
+    ///> 退出临界区
+    __thread_exit_critical(uiStatus);
 }
 
 /**
@@ -342,5 +376,13 @@ OPERATE_RET tiny_os_thread_delete(IN THREAD_HANDLE threadHandle)
 */
 OPERATE_RET tiny_os_thread_priority_set(IN THREAD_HANDLE threadHandle, IN UINT_T uiThreadPrio)
 {
+    UINT_T uiStatus = __thread_enter_critical();
 
+    THREAD_HANDLE_S *ptThread = (THREAD_HANDLE_S*)&threadHandle;
+    ptThread->uiPrio = uiThreadPrio;
+
+    // to do , 判断是否需要调度一次；
+    
+    ///> 退出临界区
+    __thread_exit_critical(uiStatus);
 }
